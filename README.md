@@ -1,6 +1,6 @@
 | **Documentation**| **Paper**|
 |:----------------:|:--------:|
-|[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://msrudolph.github.io/PauliPropagation.jl/stable/)[![](https://img.shields.io/badge/docs-dev-green.svg)](https://msrudolph.github.io/PauliPropagation.jl/dev/)|[![arXiv](https://img.shields.io/badge/arXiv-2505.21606-b31b1b.svg)](https://arxiv.org/abs/2505.21606)|
+|[![](https://img.shields.io/badge/docs-stable-blue.svg)](https://SparqleSim.github.io/PauliPropagation.jl/stable/)[![](https://img.shields.io/badge/docs-dev-green.svg)](https://SparqleSim.github.io/PauliPropagation.jl/dev/)|[![arXiv](https://img.shields.io/badge/arXiv-2505.21606-b31b1b.svg)](https://arxiv.org/abs/2505.21606)|
 
 # PauliPropagation.jl
 `PauliPropagation.jl` is a Julia package for simulating Pauli propagation in quantum circuits and systems. It focuses on simulating the evolution of observables expressed in the Pauli basis under the action of unitary gates and non-unitary channels in a quantum circuit.
@@ -26,7 +26,7 @@ If you want to install the latest code, you can install the package directly fro
 For example, if you are working with a Jupyter notebook, run
 ```julia
 using Pkg
-Pkg.add(url="https://github.com/MSRudolph/PauliPropagation.jl.git", rev="branchname")
+Pkg.add(url="https://github.com/SparqleSim/PauliPropagation.jl.git", rev="branchname")
 ```
 where you can use the keyword `rev="branchname"` to install development versions of the package.
 We don't recommend using branches other than `main` or `dev`.
@@ -144,9 +144,9 @@ Here are some features that we want to implement in the future. Feel free to con
 ## How to contribute
 We have a Slack channel `#pauli-propagation` in the [Julia Slack](https://join.slack.com/t/julialang/shared_invite/zt-2zljxdwnl-kSXbwuwFHeERyxSD3iFJdQ).
 
-If something bothers you or you want to propose an enhancement, please open an [Issue](https://github.com/MSRudolph/PauliPropagation.jl/issues) describing everything in detail.
+If something bothers you or you want to propose an enhancement, please open an [Issue](https://github.com/SparqleSim/PauliPropagation.jl/issues) describing everything in detail.
 
-For a concrete change of code, please fork this GitHub repository and submit a [Pull Request](https://github.com/MSRudolph/PauliPropagation.jl/pulls).
+For a concrete change of code, please fork this GitHub repository and submit a [Pull Request](https://github.com/SparqleSim/PauliPropagation.jl/pulls).
 
 Otherwise, feel free to reach out to the developers!
 
@@ -158,7 +158,7 @@ Contact Manuel via manuel.rudolph@epfl.ch.
 Further contributors to this package include [Yanting Teng](https://github.com/teng10), [Tyson Jones](https://github.com/TysonRayJones), and [Su Yeon Chang](https://github.com/sychang42).
 This package is the derivative of ongoing work at the Quantum Information and Computation lab at EPFL, supervised by Prof. Zoë Holmes.
 
-For more specific code issues, bug fixes, etc. please open a [GitHub issue](https://github.com/MSRudolph/PauliPropagation.jl/issues).
+For more specific code issues, bug fixes, etc. please open a [GitHub issue](https://github.com/SparqleSim/PauliPropagation.jl/issues).
 
 ## Citation
 
