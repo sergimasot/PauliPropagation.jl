@@ -180,7 +180,9 @@ export
 include("Symmetry/Symmetry.jl")
 export
     symmetrymerge,
-    translationmerge
+    symmetrymerge!,
+    translationmerge,
+    translationmerge!
 
 include("Surrogate/Surrogate.jl")
 export

@@ -73,7 +73,17 @@ translationmerge(psum)
 ```
 """
 translationmerge(psum::AbstractPauliSum) = symmetrymerge(
-    psum, (pstr -> _translatetolowestinteger(pstr, nqubits(psum)))
+    (pstr -> _translatetolowestinteger(pstr, nqubits(psum))), psum
+)
+
+
+# in-place version of translationmerge for 1D case
+"""
+    translationmerge!(psum::VectorPauliSum||VectorPauliPropagationCache)
+Shift and merge of a `psum` in a system with 1D translational symmetry, in-place version.
+"""
+translationmerge!(psum) = symmetrymerge!(
+    (pstr -> _translatetolowestinteger(pstr, nqubits(psum))), psum
 )
 
 
@@ -213,16 +223,6 @@ function _periodicshiftup(pstr::PauliStringType, nx, ny)
 
     return pstr
 end
-
-
-# in-place version of translationmerge for 1D case
-"""
-    translationmerge!(psum::VectorPauliSum||VectorPauliPropagationCache)
-Shift and merge of a `psum` in a system with 1D translational symmetry, in-place version.
-"""
-translationmerge!(psum) = symmetrymerge!(
-    (pstr -> _translatetolowestinteger(pstr, nqubits(psum))), psum
-)
 
 
 # in-place version of translationmerge for 2D case
