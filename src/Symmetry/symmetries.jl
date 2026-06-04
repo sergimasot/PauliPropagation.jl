@@ -5,6 +5,7 @@
 ##
 ###
 
+Base.real(pstr::PauliString) = PauliString(nqubits(pstr), pstr.term, real(pstr.coeff))
 
 """
     symmetrymerge(psum::AbstractPauliSum, mapfunc::Function) -> AbstractPauliSum
@@ -28,7 +29,7 @@ add!(psum, :Z, 6)
 symmetrymerge(psum, pstr -> _translatetolowestinteger(pstr, psum.nqubits))
 ```
 """
-function symmetrymerge(psum::PauliSum, mapfunc::F) where F<:Function
+function symmetrymerge(mapfunc::F, psum::PauliSum) where F<:Function
     merged_psum = PauliPropagation.similar(psum)
     # TODO: mage this work for mapfuc that also want to modify the coefficient
     for (pstr, coeff) in psum
@@ -39,12 +40,18 @@ function symmetrymerge(psum::PauliSum, mapfunc::F) where F<:Function
     return merged_psum
 end
 
-function symmetrymerge(psum::VectorPauliSum, mapfunc::F) where F<:Function
-    cache = symmetrymerge!(PropagationCache(psum), mapfunc)
+function symmetrymerge(mapfunc::F, psum::VectorPauliSum) where F<:Function
+    cache = symmetrymerge!(mapfunc, PropagationCache(psum))
     return VectorPauliSum(cache)
 end
 
-function symmetrymerge!(prop_cache::VectorPauliPropagationCache, mapfunc::F) where F<:Function
+function symmetrymerge!(mapfunc::F, psum::VectorPauliSum) where F # no <:Function restriction
+    cache = PropagationCache(psum)
+    symmetrymerge!(mapfunc, cache)
+    return extractsum!(cache, psum)
+end
+
+function symmetrymerge!(mapfunc::F, prop_cache::VectorPauliPropagationCache) where F<:Function
     AK.map!(pstr -> mapfunc(pstr), activeterms(prop_cache), activeterms(prop_cache))
     merge!(prop_cache)
     return prop_cache
@@ -207,3 +214,107 @@ function _periodicshiftup(pstr::PauliStringType, nx, ny)
     return pstr
 end
 
+
+# in-place version of translationmerge for 1D case
+"""
+    translationmerge!(psum::VectorPauliSum||VectorPauliPropagationCache)
+Shift and merge of a `psum` in a system with 1D translational symmetry, in-place version.
+"""
+translationmerge!(psum) = symmetrymerge!(
+    (pstr -> _translatetolowestinteger(pstr, nqubits(psum))), psum
+)
+
+
+# in-place version of translationmerge for 2D case
+function translationmerge!(psum, nx::Integer, ny::Integer)
+    if nqubits(psum) != nx * ny
+        throw(
+            ArgumentError("Number of qubits $(nqubits(psum)) does not 
+                match grid size $(nx) x $(ny)"
+            )
+        )
+    end
+
+    # precompute masks once to accelerate shifting
+    # main_mask: mask for all bits except the first column
+    # wrap_mask: mask for the first column    
+    main_mask, wrap_mask = PauliPropagation._computeshiftleftmasks(paulitype(psum), nx, ny)
+
+    mergefunc(pstr) = PauliPropagation._translatetolowestinteger(
+        pstr, nx, ny, main_mask, wrap_mask
+    )
+
+    return symmetrymerge!(mergefunc, psum)
+end
+
+
+# TODO: reflection
+# function reflectionmerge(psum::PauliSum, nx, ny)
+#     reflect_mapper = ReflectionMapper(nx, ny)
+#     return symmetrymerge(pstr -> reflect_mapper(pstr), psum)
+# end
+
+# reflectionmerge(psum::VectorPauliSum, args...) = reflectionmerge!(deepcopy(psum), args...)
+
+
+# function reflectionmerge!(psum, nx::Integer, ny::Integer)
+#     if nqubits(psum) != nx * ny
+#         throw(
+#             ArgumentError("Number of qubits $(nqubits(psum)) does not 
+#                 match grid size $(nx) x $(ny)"
+#             )
+#         )
+#     end
+
+#     # precompute maps once to accelerate reflection
+#     reflect_mapper = ReflectionMapper(nx, ny)
+
+#     return symmetrymerge!(reflect_mapper, psum)
+# end
+
+# function translationreflectionmerge!(psum, nx::Integer, ny::Integer)
+#     if nqubits(psum) != nx * ny
+#         throw(
+#             ArgumentError("Number of qubits $(nqubits(psum)) does not 
+#                 match grid size $(nx) x $(ny)"
+#             )
+#         )
+#     end
+
+#     # precompute masks once to accelerate shifting
+#     # main_mask: mask for all bits except the first column
+#     # wrap_mask: mask for the first column    
+#     main_mask, wrap_mask = PauliPropagation._computeshiftleftmasks(paulitype(psum), nx, ny)
+
+#     # precompute maps once to accelerate reflection
+#     reflect_mapper = ReflectionMapper(nx, ny)
+
+#     # combine symmetries
+#     mergefunc(pstr) = _translateandreflecttolowestinteger(
+#         pstr, nx, ny, main_mask, wrap_mask, reflect_mapper
+#     )
+
+#     return symmetrymerge!(mergefunc, psum)
+# end
+
+# function _translateandreflecttolowestinteger(pstr::Integer, nx, ny, main_mask, wrap_mask, reflect_mapper)
+#     if pstr == 0
+#         return pstr
+#     end
+
+#     lowest_pstr = pstr
+#     for _ in 1:ny
+#         for _ in 1:nx
+#             # shift periodically by one column
+#             pstr = _periodicshiftleft(pstr, nx, main_mask, wrap_mask)
+
+#             # if the shifted Pauli is lower, record lowest int
+#             lowest_pstr = min(lowest_pstr, reflect_mapper(pstr))
+#         end
+
+#         pstr = _periodicshiftup(pstr, nx, ny) # shift periodically by one row
+
+#     end
+
+#     return lowest_pstr
+# end
