@@ -226,4 +226,4 @@ Base.filter(filterfunc::F, psum::AbstractPauliSum) where {F<:Function} = truncat
 
 Filter a `AbstractPauliSum` in-place by removing all Pauli strings for which `filterfunc(pstr, coeff)` returns `false`.
 """
-filter!(filterfunc::F, psum::AbstractPauliSum) where {F<:Function} = truncate!((pstr, coeff) -> !filterfunc(pstr, coeff), psum)
+Base.filter!(filterfunc::F, psum::AbstractPauliSum) where {F<:Function} = truncate!((pstr, coeff) -> !filterfunc(pstr, coeff), psum)
