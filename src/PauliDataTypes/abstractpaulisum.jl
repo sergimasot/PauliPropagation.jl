@@ -146,7 +146,7 @@ function Base.:+(pstr1::PauliString, pstr2::PauliString)
 
     # get a compatibel coefficient type
     CType = promote_type(coefftype(pstr1), coefftype(pstr2))
-    psum = PauliSum(CType, nq)
+    psum = PauliSum(nq, Dict{paulitype(pstr1), CType}())
     add!(psum, pstr1)
     add!(psum, pstr2)
     return psum
