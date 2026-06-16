@@ -58,7 +58,11 @@ export
     commutes,
     commutator,
     trace,
-    getinttype
+    getinttype,
+    NTupleInteger,
+    chunks,
+    getchunkedinttype,
+    maxqubits
 
 include("PauliTransferMatrix/PauliTransferMatrix.jl")
 export

@@ -2,6 +2,8 @@ using PauliPropagation
 using Test
 using Random
 
+const test_cuda = include("setup_cuda.jl")
+
 @testset "PauliPropagation.jl" begin
 
     include("test_propagate.jl")
@@ -48,4 +50,13 @@ using Random
 
     include("test_yao_extension.jl")
 
+    include("test_ntuple_pauli_string.jl")
+
+    if test_cuda
+        if CUDA.functional()
+            include("test_cuda_extension.jl")
+        else
+            @warn "CUDA.jl is installed but not functional; skipping GPU tests."
+        end
+    end
 end
