@@ -57,3 +57,17 @@ end
     @test PauliSum(merged_vecpsum) == expected_psum
 
 end
+
+
+@testset "translationmerge grid dimension mismatch" begin
+    nq = 6
+    input_psum = get_psum(nq)
+
+    # nx * ny must equal nqubits(psum)
+    @test_throws ArgumentError translationmerge(input_psum, 2, 4)
+    @test_throws ArgumentError translationmerge(input_psum, 4, 1)
+    @test_throws ArgumentError translationmerge(VectorPauliSum(input_psum), 2, 4)
+
+    # sanity check: matching dimensions do not throw
+    @test translationmerge(input_psum, 2, 3) isa PauliSum
+end
