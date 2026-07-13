@@ -12,6 +12,11 @@
 # avoids paying task-spawn/partitioning overhead while the head is still small.
 const _TAILMERGE_MIN_ELEMS_PER_TASK = 1024
 
+# _merge!() only dispatches to sortedtailmerge! when:
+# sortedprefix(term_sum) / length(term_sum) > _TAILMERGE_SORTEDPREFIX_FRACTION
+# below it, a full re-sort is cheaper.
+const _TAILMERGE_SORTEDPREFIX_FRACTION = 0.4
+
 """
     sortedtailmerge!(prop_cache::AbstractPropagationCache, n_old::Int, n_new::Int; thread::Bool=true)
 

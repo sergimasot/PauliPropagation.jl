@@ -51,15 +51,22 @@ function _merge!(::DictStorage, prop_cache::AbstractPropagationCache; kwargs...)
     return prop_cache
 end
 
-# Assumptions:
-# TODO
 function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; thread::Bool=true, kwargs...)
 
     if isempty(prop_cache)
         return prop_cache
     end
 
-    # sorts by isless and identity by default
+    n_old = sortedprefix(mainsum(prop_cache))
+    n_new = activesize(prop_cache)
+
+    if n_old / n_new > _TAILMERGE_SORTEDPREFIX_FRACTION
+        # the sorted head covers most of the array: sort just the unsorted tail and merge it in
+        sortedtailmerge!(prop_cache, n_old, n_new; thread)
+        return prop_cache
+    end
+
+    # fallback: sort everything
     # TODO: allow sorting kwargs?
     sortbyterm!(prop_cache; thread)
 

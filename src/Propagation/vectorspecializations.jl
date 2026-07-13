@@ -1,7 +1,3 @@
-# The sort-tail-merge specializations below rely on plain CPU threading and don't support GPU
-# arrays, so they're restricted to Array-backed caches; anything else falls back to the generic merge!().
-const CPUVectorPauliPropagationCache = VectorPauliPropagationCache{<:VectorPauliSum{<:Array,<:Array},<:Array,<:Array}
-
 """
     applytoall!(gate::PauliRotation, prop_cache::VectorPauliPropagationCache, theta; kwargs...)
 
@@ -92,27 +88,6 @@ function _applypaulirotation!(prop_cache::VectorPauliPropagationCache, gate_mask
     return
 end
 
-"""
-    applymergetruncate!(gate::PauliRotation, prop_cache::CPUVectorPauliPropagationCache, theta; thread::Bool=true, kwargs...)
-
-Faster `applymergetruncate!` for `PauliRotation` gates on a CPU-backed `VectorPauliPropagationCache`.
-`applytoall!` only rescales existing terms and appends new ones after them, so the old terms stay
-sorted and duplicate-free. Instead of re-sorting everything, this only sorts the new tail and merges
-it into that head. See `sortedtailmerge!` in `src/Base/sortedtailmerge.jl`.
-"""
-function PropagationBase.applymergetruncate!(gate::PauliRotation, prop_cache::CPUVectorPauliPropagationCache, theta; thread::Bool=true, kwargs...)
-    n_old = sortedprefix(mainsum(prop_cache))
-
-    applytoall!(gate, prop_cache, theta; thread, kwargs...)
-
-    n_new = activesize(prop_cache)
-    sortedtailmerge!(prop_cache, n_old, n_new; thread)
-
-    truncate!(prop_cache; thread, kwargs...)
-
-    return prop_cache
-end
-
 ### Imaginary Pauli Rotation
 """
     applytoall!(gate::ImaginaryPauliRotation, prop_cache::VectorPauliPropagationCache, tau; kwargs...)
@@ -142,10 +117,10 @@ function PropagationBase.applytoall!(gate::ImaginaryPauliRotation, prop_cache::V
     flagstoindices!(prop_cache; thread)
 
     # the final index is the number of new terms
-    n_noncommutes = lastactiveindex(prop_cache)
+    n_commutes = lastactiveindex(prop_cache)
 
     # slit off into the same array
-    n_new = n_old + n_noncommutes
+    n_new = n_old + n_commutes
 
     # potential resize factor
     resize_factor = 1.5
@@ -201,31 +176,6 @@ function _applyimaginarypaulirotation!(prop_cache::VectorPauliPropagationCache, 
     setactivesize!(prop_cache, n_new)
 
     return
-end
-
-"""
-    applymergetruncate!(gate::ImaginaryPauliRotation, prop_cache::CPUVectorPauliPropagationCache, tau; normalize_coeffs=true, thread::Bool=true, kwargs...)
-
-Same sort-tail-merge speedup as the `PauliRotation` method above, for `ImaginaryPauliRotation` gates.
-If `normalize_coeffs=true`, normalizes by the identity Pauli string's coefficient after merging,
-matching the generic `ImaginaryPauliRotation` path.
-"""
-function PropagationBase.applymergetruncate!(gate::ImaginaryPauliRotation, prop_cache::CPUVectorPauliPropagationCache, tau; normalize_coeffs=true, thread::Bool=true, kwargs...)
-    n_old = sortedprefix(mainsum(prop_cache))
-
-    applytoall!(gate, prop_cache, tau; thread, kwargs...)
-
-    n_new = activesize(prop_cache)
-    sortedtailmerge!(prop_cache, n_old, n_new; thread)
-
-    if normalize_coeffs
-        # "getmergedcoeff" because we know there are no duplicates; 0 is the identity Pauli string
-        mult!(prop_cache, 1 / getmergedcoeff(mainsum(prop_cache), 0))
-    end
-
-    truncate!(prop_cache; thread, kwargs...)
-
-    return prop_cache
 end
 
 ### Clifford gates

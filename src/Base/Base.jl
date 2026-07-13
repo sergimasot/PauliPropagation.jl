@@ -88,6 +88,5 @@ export
     filterviaflags!
 
 include("./sortedtailmerge.jl")
-export sortedtailmerge!
 
 end
