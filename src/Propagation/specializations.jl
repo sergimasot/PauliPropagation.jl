@@ -326,10 +326,10 @@ end
 
 ### Frozen Gates
 """
-    applytoall!(gate::FrozenGate, thetas, psum, aux_psum; kwargs...)
+    applymergetruncate!(gate::FrozenGate, prop_cache::AbstractPauliPropagationCache; kwargs...)
 
-Overload of `applytoall!` for `FrozenGate`s. Re-directs to `applytoall!` for the wrapped `FrozenGate.gate` with the frozen parameter.
+Overload of `applymergetruncate!` for `FrozenGate`s. Re-directs to `applymergetruncate!` for the wrapped `FrozenGate.gate` with the frozen parameter.
 """
-function PropagationBase.applytoall!(gate::FrozenGate, prop_cache::AbstractPauliPropagationCache; kwargs...)
-    return applytoall!(gate.gate, prop_cache, gate.parameter; kwargs...)
+function PropagationBase.applymergetruncate!(gate::FrozenGate, prop_cache::AbstractPauliPropagationCache; kwargs...)
+    return applymergetruncate!(gate.gate, prop_cache, gate.parameter; kwargs...)
 end
