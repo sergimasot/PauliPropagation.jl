@@ -57,12 +57,18 @@ function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; thread::B
         return prop_cache
     end
 
-    n_old = sortedprefix(mainsum(prop_cache))
-    n_new = activesize(prop_cache)
+    n_sorted = sortedprefix(mainsum(prop_cache))
+    n_total = activesize(prop_cache)
 
-    if n_old / n_new > _TAILMERGE_SORTEDPREFIX_FRACTION
+    if n_sorted > n_total
+        # something went wrong. Set to zero and do a full merge.
+        setsortedprefix!(mainsum(prop_cache), 0)
+        n_sorted = sortedprefix(mainsum(prop_cache))
+    end
+
+    if n_sorted / n_total > _TAILMERGE_SORTEDPREFIX_FRACTION
         # the sorted head covers most of the array: sort just the unsorted tail and merge it in
-        sortedtailmerge!(prop_cache, n_old, n_new; thread)
+        sortedtailmerge!(prop_cache, n_sorted, n_total; thread)
         return prop_cache
     end
 
