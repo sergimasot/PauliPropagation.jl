@@ -52,11 +52,13 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=tru
     task_partitioner = AK.TaskPartitioner(n_old, _maxtasks(thread), _TAILMERGE_MIN_ELEMS_PER_TASK)
     n_tasks = task_partitioner.num_tasks
 
-    if n_tasks == 1
-        tail_terms = view(aux_terms, n_old+1:n_new)
-        tail_coeffs = view(aux_coeffs, n_old+1:n_new)
+    # the merge below only ever writes into aux[1:merged_count] with merged_count <= n_new, so any
+    # capacity beyond n_new (left over from gate-application growth headroom) is free scratch space
+    # for the sorted tail, regardless of n_tasks -- else fall back to a fresh allocation
+    if length(aux_terms) - n_new >= n_tail
+        tail_terms = view(aux_terms, n_new+1:n_new+n_tail)
+        tail_coeffs = view(aux_coeffs, n_new+1:n_new+n_tail)
     else
-        # TODO: can we get away without extra allocation here?
         tail_terms = similar(unsorted_tail_terms)
         tail_coeffs = similar(unsorted_tail_coeffs)
     end
