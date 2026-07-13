@@ -35,68 +35,73 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache, n_old::Int, n_ne
     active_terms = terms(mainsum(prop_cache))
     active_coeffs = coefficients(mainsum(prop_cache))
 
-    # sort just the tail into scratch buffers, small relative to n_old for a growing circuit
-    tail_terms = active_terms[n_old+1:n_new]
-    tail_coeffs = active_coeffs[n_old+1:n_new]
-    tail_perm = collect(1:n_tail)
-    AK.sortperm!(tail_perm, tail_terms)
-    tail_terms = tail_terms[tail_perm]
-    tail_coeffs = tail_coeffs[tail_perm]
-
     # merge output goes into the auxiliary sum, swapped in as the new active one at the end
     aux_terms = terms(auxsum(prop_cache))
     aux_coeffs = coefficients(auxsum(prop_cache))
+
+    # sort the tail 
+    # interestingly sort! of StructArray is not faster, potentially due to heavier writes
+    unsorted_tail_terms = view(active_terms, n_old+1:n_new)
+    unsorted_tail_coeffs = view(active_coeffs, n_old+1:n_new)
+    tail_perm = view(indices(prop_cache), 1:n_tail)
+    AK.sortperm!(tail_perm, unsorted_tail_terms; max_tasks=_maxtasks(thread))
 
     task_partitioner = AK.TaskPartitioner(n_old, _maxtasks(thread), _TAILMERGE_MIN_ELEMS_PER_TASK)
     n_tasks = task_partitioner.num_tasks
 
     if n_tasks == 1
+        tail_terms = view(aux_terms, n_old+1:n_new)
+        tail_coeffs = view(aux_coeffs, n_old+1:n_new)
+    else
+        # TODO: can we get away without extra allocation here?
+        tail_terms = similar(unsorted_tail_terms)
+        tail_coeffs = similar(unsorted_tail_coeffs)
+    end
+    
+    permuteviaindices!(tail_terms, tail_coeffs, unsorted_tail_terms, unsorted_tail_coeffs, tail_perm; thread)
+
+    if n_tasks == 1
         merged_count = _tailmerge_write!(aux_terms, aux_coeffs, 1,
             active_terms, active_coeffs, 1, n_old, tail_terms, tail_coeffs, 1, n_tail, Val(true))
-        swapsums!(prop_cache)
-        setactivesize!(prop_cache, merged_count)
-        setsortedprefix!(mainsum(prop_cache), merged_count)
-        return prop_cache
-    end
+    else
+        # slice and partition the two-pointer merge accross threads
+        tail_bounds_per_task = Vector{Int}(undef, n_tasks + 1)
+        tail_bounds_per_task[1] = 1
+        tail_bounds_per_task[n_tasks+1] = n_tail + 1
+        @inbounds for task_id in 1:(n_tasks-1)
+            head_chunk_boundary_term = active_terms[task_partitioner[task_id].stop]
+            tail_bounds_per_task[task_id+1] = searchsortedlast(tail_terms, head_chunk_boundary_term) + 1
+        end
 
-    # match each head chunk to a tail slice by binary-searching its largest term into the
-    # (already-sorted) tail, so each (head-chunk, tail-slice) pair can merge independently
-    tail_bounds_per_task = Vector{Int}(undef, n_tasks + 1)
-    tail_bounds_per_task[1] = 1
-    tail_bounds_per_task[n_tasks+1] = n_tail + 1
-    @inbounds for task_id in 1:(n_tasks-1)
-        head_chunk_boundary_term = active_terms[task_partitioner[task_id].stop]
-        tail_bounds_per_task[task_id+1] = searchsortedlast(tail_terms, head_chunk_boundary_term) + 1
-    end
+        # dry run: each task counts its own merged output size (unknown ahead of time due to collisions)
+        merged_counts_per_task = Vector{Int}(undef, n_tasks)
+        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+            head_range = task_partitioner[task_id]
+            merged_counts_per_task[task_id] = _tailmerge_write!(aux_terms, aux_coeffs, 1,
+                active_terms, active_coeffs, head_range.start, head_range.stop,
+                tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, Val(false))
+        end
 
-    # dry run: each task counts its own merged output size (unknown ahead of time due to collisions)
-    merged_counts_per_task = Vector{Int}(undef, n_tasks)
-    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-        head_range = task_partitioner[task_id]
-        merged_counts_per_task[task_id] = _tailmerge_write!(aux_terms, aux_coeffs, 1,
-            active_terms, active_coeffs, head_range.start, head_range.stop,
-            tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, Val(false))
-    end
+        # prefix sum over the per-task counts gives each task its exact final write offset
+        write_offsets_per_task = Vector{Int}(undef, n_tasks + 1)
+        write_offsets_per_task[1] = 1
+        @inbounds for task_id in 1:n_tasks
+            write_offsets_per_task[task_id+1] = write_offsets_per_task[task_id] + merged_counts_per_task[task_id]
+        end
+        merged_count = write_offsets_per_task[n_tasks+1] - 1
 
-    # prefix sum over the per-task counts gives each task its exact final write offset
-    write_offsets_per_task = Vector{Int}(undef, n_tasks + 1)
-    write_offsets_per_task[1] = 1
-    @inbounds for task_id in 1:n_tasks
-        write_offsets_per_task[task_id+1] = write_offsets_per_task[task_id] + merged_counts_per_task[task_id]
-    end
-    total_merged_count = write_offsets_per_task[n_tasks+1] - 1
-
-    # real pass: each task redoes the same merge, now writing directly into its final position
-    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-        head_range = task_partitioner[task_id]
-        _tailmerge_write!(aux_terms, aux_coeffs, write_offsets_per_task[task_id],
-            active_terms, active_coeffs, head_range.start, head_range.stop,
-            tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, Val(true))
+        # real pass: each task redoes the same merge, now writing directly into its final position
+        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+            head_range = task_partitioner[task_id]
+            _tailmerge_write!(aux_terms, aux_coeffs, write_offsets_per_task[task_id],
+                active_terms, active_coeffs, head_range.start, head_range.stop,
+                tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, Val(true))
+        end
     end
 
     swapsums!(prop_cache)
-    setactivesize!(prop_cache, total_merged_count)
-    setsortedprefix!(mainsum(prop_cache), total_merged_count)
+    setactivesize!(prop_cache, merged_count)
+    setsortedprefix!(mainsum(prop_cache), merged_count)
 
     return prop_cache
 end
