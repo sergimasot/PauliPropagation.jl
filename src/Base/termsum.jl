@@ -21,6 +21,11 @@ _storagetype(x) = _thrownotimplemented(typeof(x), :StorageType)
 # often this is a Dict{TermType,CoeffType} but it can be anything
 storage(term_sum::TS) where TS<:AbstractTermSum = _thrownotimplemented(TS, :storage)
 
+# Number of leading terms known sorted by integer value and duplicate-free. 0 is always a safe
+# default; only array-backed term sums have any reason to override this.
+sortedprefix(term_sum::AbstractTermSum)::Int = 0
+setsortedprefix!(term_sum::AbstractTermSum, n::Int) = term_sum
+
 Base.length(term_sum::AbstractTermSum) = length(terms(term_sum))
 
 nsites(term_sum::TS) where TS<:AbstractTermSum = _thrownotimplemented(TS, :nsites)
@@ -79,15 +84,26 @@ function _getmergedcoeff(::DictStorage, term_sum::AbstractTermSum, trm)
     return _getcoeff(DictStorage(), term_sum, trm)
 end
 
-# everywhere else, we do a linear search
+# binary-search the known-sorted prefix, linear-scan only the remainder
 function _getmergedcoeff(::ArrayStorage, term_sum::AbstractTermSum, trm)
     terms_vec, coeffs_vec = storage(term_sum)
-    i = findfirst(t -> t == trm, terms_vec)
-    if isnothing(i)
-        return zero(coefftype(term_sum))
-    else
-        return coeffs_vec[i]
+    n_sorted = sortedprefix(term_sum)
+
+    if n_sorted > 0
+        sorted_view = view(terms_vec, 1:n_sorted)
+        i = searchsortedfirst(sorted_view, trm)
+        if i <= n_sorted && sorted_view[i] == trm
+            return coeffs_vec[i]
+        end
     end
+
+    for i in (n_sorted+1):length(terms_vec)
+        if terms_vec[i] == trm
+            return coeffs_vec[i]
+        end
+    end
+
+    return zero(coefftype(term_sum))
 end
 
 
@@ -164,6 +180,8 @@ function _copy!(::ArrayStorage, dst_term_sum::AbstractTermSum, src_term_sum::Abs
 
     resize!(dst_term_sum, length(src_term_sum))
     resize!(dst_terms, length(src_term_sum))
+
+    setsortedprefix!(dst_term_sum, sortedprefix(src_term_sum))
 
     return dst_term_sum
 end
@@ -317,6 +335,12 @@ function Base_delete!(::ArrayStorage, term_sum::AbstractTermSum, term)
     if !isnothing(ind)
         deleteat!(terms_vec, ind)
         deleteat!(coeffs_vec, ind)
+        # removing a term at or before the sorted prefix shifts everything after it down by
+        # one, so the prefix is still sorted but one shorter; a term after it leaves the prefix untouched
+        n_sorted = sortedprefix(term_sum)
+        if ind <= n_sorted
+            setsortedprefix!(term_sum, n_sorted - 1)
+        end
     end
     return term_sum
 end
@@ -341,6 +365,7 @@ function _empty!(::ArrayStorage, term_sum::AbstractTermSum)
     terms_vec, coeffs_vec = storage(term_sum)
     empty!(terms_vec)
     empty!(coeffs_vec)
+    setsortedprefix!(term_sum, 0)
     return term_sum
 end
 

@@ -53,7 +53,7 @@ end
 
 # Assumptions:
 # TODO
-function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; kwargs...)
+function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; thread::Bool=true, kwargs...)
 
     if isempty(prop_cache)
         return prop_cache
@@ -61,32 +61,34 @@ function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; kwargs...
 
     # sorts by isless and identity by default
     # TODO: allow sorting kwargs?
-    sortbyterm!(prop_cache)
+    sortbyterm!(prop_cache; thread)
 
-    _deduplicate!(prop_cache)
+    _deduplicate!(prop_cache; thread)
+
+    setsortedprefix!(mainsum(prop_cache), activesize(prop_cache))
 
     return prop_cache
 
 end
 
 
-function _deduplicate!(prop_cache::AbstractPropagationCache)
+function _deduplicate!(prop_cache::AbstractPropagationCache; thread::Bool=true)
 
-    _flaggroupbegin!(prop_cache)
+    _flaggroupbegin!(prop_cache; thread)
 
-    flagstoindices!(prop_cache)
+    flagstoindices!(prop_cache; thread)
 
-    _mergegroups!(prop_cache)
+    _mergegroups!(prop_cache; thread)
 
     return prop_cache
 end
 
 # flags if term at i is different from term at i-1
-function _flaggroupbegin!(prop_cache::AbstractPropagationCache)
+function _flaggroupbegin!(prop_cache::AbstractPropagationCache; thread::Bool=true)
     term_view = activeterms(prop_cache)
     flags_view = activeflags(prop_cache)
 
-    AK.foreachindex(term_view) do ii
+    AK.foreachindex(term_view; max_tasks=_maxtasks(thread)) do ii
         if ii == 1
             flags_view[ii] = true
         else
@@ -97,7 +99,7 @@ function _flaggroupbegin!(prop_cache::AbstractPropagationCache)
 end
 
 # given flagged group beginnings, merge the groups
-function _mergegroups!(prop_cache::AbstractPropagationCache)
+function _mergegroups!(prop_cache::AbstractPropagationCache; thread::Bool=true)
 
     term_view = activeterms(prop_cache)
     coeffs = activecoeffs(prop_cache)
@@ -107,7 +109,7 @@ function _mergegroups!(prop_cache::AbstractPropagationCache)
     indices = activeindices(prop_cache)
     active_size = activesize(prop_cache)
 
-    AK.foreachindex(term_view) do ii
+    AK.foreachindex(term_view; max_tasks=_maxtasks(thread)) do ii
         # if this is the start of a new group
         if flags[ii]
             # end index is the before the next flag or the end of the array
