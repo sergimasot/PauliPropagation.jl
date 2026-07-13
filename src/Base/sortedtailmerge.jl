@@ -18,14 +18,17 @@ const _TAILMERGE_MIN_ELEMS_PER_TASK = 1024
 const _TAILMERGE_SORTEDPREFIX_FRACTION = 0.4
 
 """
-    sortedtailmerge!(prop_cache::AbstractPropagationCache, n_old::Int, n_new::Int; thread::Bool=true)
+    sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=true)
 
-Merge the sorted, duplicate-free head `[1:n_old]` of `mainsum(prop_cache)`'s active terms against
-its unsorted tail `[n_old+1:n_new]`, in place of a full re-sort of `[1:n_new]`. The tail may contain
-duplicates, within itself or against the head; all are combined via `mergefunc`. Updates
-`activesize`/`sortedprefix` on the result. Set `thread=false` to force sequential execution.
+Merge the sorted, duplicate-free head `[1:sortedprefix(mainsum(prop_cache))]` of `mainsum(prop_cache)`'s
+active terms against its unsorted tail `[sortedprefix(mainsum(prop_cache))+1:activesize(prop_cache)]`, in
+place of a full re-sort. The tail may contain duplicates, within itself or against the head; all are
+combined via `mergefunc`. Updates `activesize`/`sortedprefix` on the result. Set `thread=false` to force
+sequential execution.
 """
-function sortedtailmerge!(prop_cache::AbstractPropagationCache, n_old::Int, n_new::Int; thread::Bool=true)
+function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=true)
+    n_old = sortedprefix(mainsum(prop_cache))
+    n_new = activesize(prop_cache)
     n_tail = n_new - n_old
     if n_tail == 0
         setsortedprefix!(mainsum(prop_cache), n_old)

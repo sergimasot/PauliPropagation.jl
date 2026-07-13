@@ -68,7 +68,7 @@ function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; thread::B
 
     if n_sorted / n_total > _TAILMERGE_SORTEDPREFIX_FRACTION
         # the sorted head covers most of the array: sort just the unsorted tail and merge it in
-        sortedtailmerge!(prop_cache, n_sorted, n_total; thread)
+        sortedtailmerge!(prop_cache; thread)
         return prop_cache
     end
 
