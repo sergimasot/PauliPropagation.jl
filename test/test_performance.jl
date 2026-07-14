@@ -96,6 +96,23 @@ end
     @test dict_fused == stock
 end
 
+@testset "fused Vector PauliNoise matches stock exactly" begin
+    # PauliNoise never branches or merges, so fused=true must reproduce stock coefficients exactly,
+    # even under truncation.
+    nq = 6
+
+    Random.seed!(2)
+    pstr = PauliString(nq, rand([:X, :Y, :Z], nq), 1:nq)
+    noise_circuit = [DepolarizingNoise(qind, 0.03 + 0.01 * qind) for qind in 1:nq]
+    min_abs_coeff = 1e-8
+
+    stock = propagate(noise_circuit, pstr; min_abs_coeff)
+    vec_fused_sum = Performance.propagate(noise_circuit, VectorPauliSum(pstr); min_abs_coeff, fused=true)
+    vec_fused = PauliSum(nq, Dict(zip(paulis(vec_fused_sum), coefficients(vec_fused_sum))))
+
+    @test vec_fused == stock
+end
+
 @testset "fused Vector: thread=false matches thread=true on a multi-task-sized propagation" begin
     # AK.TaskPartitioner only splits into multiple tasks once the active range is large enough, so
     # a small circuit would silently skip the multi-task code path. This one grows past 10^5 terms.
