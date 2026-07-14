@@ -65,7 +65,7 @@ function _applypaulirotation!(prop_cache::VectorPauliPropagationCache, gate_mask
     indices = activeindices(prop_cache)
 
     # TODO: modularize this into something like "two-branching pattern"
-    AK.foreachindex(active_terms; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(active_terms; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         # here it anticommutes
         if flags[ii]
             term = terms[ii]
@@ -155,7 +155,7 @@ function _applyimaginarypaulirotation!(prop_cache::VectorPauliPropagationCache, 
     flags = activeflags(prop_cache)
     indices = activeindices(prop_cache)
 
-    AK.foreachindex(active_terms; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(active_terms; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         # branching upon commutation
         if flags[ii]
             term = terms[ii]
@@ -195,7 +195,7 @@ function PropagationBase.applytoall!(gate::CliffordGate, prop_cache::VectorPauli
     terms_view = activeterms(prop_cache)
     coeffs_view = activecoeffs(prop_cache)
     @assert length(terms_view) == length(coeffs_view)
-    AK.foreachindex(terms_view; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(terms_view; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         term = terms_view[ii]
         coeff = coeffs_view[ii]
 
@@ -231,7 +231,7 @@ function PropagationBase.applytoall!(gate::PauliNoise, prop_cache::VectorPauliPr
     terms_view = activeterms(prop_cache)
     coeffs_view = activecoeffs(prop_cache)
     @assert length(terms_view) == length(coeffs_view)
-    AK.foreachindex(terms_view; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(terms_view; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         pstr = terms_view[ii]
         coeff = coeffs_view[ii]
 

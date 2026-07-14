@@ -2,7 +2,7 @@
 function sortbyterm!(prop_cache::AbstractPropagationCache; lt=isless, by=identity, rev=false, order=Base.Forward, thread::Bool=true)
 
     # if terms are are not native data types, sorting kwargs need to be provided
-    AK.sortperm!(activeindices(prop_cache), activeterms(prop_cache); lt, by, rev, order, max_tasks=maxtasks(thread))
+    AK.sortperm!(activeindices(prop_cache), activeterms(prop_cache); lt, by, rev, order, max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK)
 
     permuteviaindices!(prop_cache; thread)
 
@@ -20,7 +20,7 @@ function flag!(f::F, dst_flags, terms, coeffs; thread::Bool=true) where F<:Funct
     @assert length(dst_flags) <= length(terms)
     @assert length(dst_flags) <= length(coeffs)
 
-    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         dst_flags[ii] = f(terms[ii], coeffs[ii])
     end
     return dst_flags
@@ -35,7 +35,7 @@ end
 function flagterms!(f::F, dst_flags, terms; thread::Bool=true) where F<:Function
     @assert length(dst_flags) <= length(terms)
 
-    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         dst_flags[ii] = f(terms[ii])
     end
     return dst_flags
@@ -50,14 +50,14 @@ end
 function flagcoeffs!(f::F, dst_flags, coeffs; thread::Bool=true) where F<:Function
     @assert length(dst_flags) <= length(coeffs)
 
-    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(dst_flags; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         dst_flags[ii] = f(coeffs[ii])
     end
     return dst_flags
 end
 
 flagstoindices!(prop_cache::AbstractPropagationCache; thread::Bool=true) = flagstoindices!(activeindices(prop_cache), activeflags(prop_cache); thread)
-flagstoindices!(dst_indices, flags; thread::Bool=true) = AK.accumulate!(+, dst_indices, flags; init=zero(eltype(dst_indices)), max_tasks=maxtasks(thread))
+flagstoindices!(dst_indices, flags; thread::Bool=true) = AK.accumulate!(+, dst_indices, flags; init=zero(eltype(dst_indices)), max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK)
 
 function permuteviaindices!(prop_cache::AbstractPropagationCache; thread::Bool=true)
     indices_view = activeindices(prop_cache)
@@ -78,7 +78,7 @@ function permuteviaindices!(dst_terms, dst_coeffs, src_terms, src_coeffs, indice
     @assert length(indices) <= length(src_terms) && length(indices) <= length(src_coeffs)
     @assert length(indices) <= length(dst_terms) && length(indices) <= length(dst_coeffs)
 
-    AK.foreachindex(indices; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(indices; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         sorted_idx = indices[ii]
         dst_terms[ii] = src_terms[sorted_idx]
         dst_coeffs[ii] = src_coeffs[sorted_idx]
@@ -114,7 +114,7 @@ function filterviaflags!(flags, dst_indices, dst_terms, dst_coeffs, src_terms, s
 
     flagstoindices!(dst_indices, flags; thread)
 
-    AK.foreachindex(flags; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(flags; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         if flags[ii]
             dst_terms[dst_indices[ii]] = src_terms[ii]
             dst_coeffs[dst_indices[ii]] = src_coeffs[ii]
@@ -127,7 +127,7 @@ end
 function _copy!(dst_terms, dst_coeffs, src_terms, src_coeffs; thread::Bool=true)
     @assert length(dst_terms) >= length(src_terms)
     @assert length(dst_coeffs) >= length(src_coeffs)
-    AK.foreachindex(src_terms; max_tasks=maxtasks(thread)) do ii
+    AK.foreachindex(src_terms; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK) do ii
         dst_terms[ii] = src_terms[ii]
         dst_coeffs[ii] = src_coeffs[ii]
     end

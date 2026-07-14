@@ -5,6 +5,10 @@ _invertfunc(func::F) where {F<:Function} = args -> !func(args...)
 # thread=false runs everything on a single thread
 maxtasks(thread::Bool) = thread ? Threads.nthreads() : 1
 
+# Below this many elements, a single sequential task is used regardless of thread count 
+# found via trial and error
+const _MIN_ELEMS_PER_TASK = 16384
+
 # for CPU-only code likeThreads.@spawn
 # GPU extensions override this for their array for fallback functionality
 _iscpuarray(::AbstractArray) = true

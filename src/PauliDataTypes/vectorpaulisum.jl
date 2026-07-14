@@ -5,9 +5,11 @@
 ##
 ###
 
-# This type multi-threads where possible. 
+# This type multi-threads where possible.
 using AcceleratedKernels
 const AK = AcceleratedKernels
+
+const _MIN_ELEMS_PER_TASK = PropagationBase._MIN_ELEMS_PER_TASK
 
 """
     VectorPauliSum{TV,CV} <: AbstractPauliSum
