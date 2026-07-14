@@ -66,8 +66,10 @@ function _merge!(::ArrayStorage, prop_cache::AbstractPropagationCache; thread::B
         n_sorted = sortedprefix(mainsum(prop_cache))
     end
 
-    if n_sorted / n_total > _TAILMERGE_SORTEDPREFIX_FRACTION
+    if n_sorted / n_total > _TAILMERGE_SORTEDPREFIX_FRACTION && _iscpuarray(terms(mainsum(prop_cache)))
         # the sorted head covers most of the array: sort just the unsorted tail and merge it in
+        # (CPU-only scalar code, hence the backing-array check -- GPU backends fall through to
+        # the fully AK-portable path below instead)
         sortedtailmerge!(prop_cache; thread)
         return prop_cache
     end
@@ -101,7 +103,7 @@ function _flaggroupbegin!(prop_cache::AbstractPropagationCache; thread::Bool=tru
     term_view = activeterms(prop_cache)
     flags_view = activeflags(prop_cache)
 
-    AK.foreachindex(term_view; max_tasks=_maxtasks(thread)) do ii
+    AK.foreachindex(term_view; max_tasks=maxtasks(thread)) do ii
         if ii == 1
             flags_view[ii] = true
         else
@@ -122,7 +124,7 @@ function _mergegroups!(prop_cache::AbstractPropagationCache; thread::Bool=true)
     indices = activeindices(prop_cache)
     active_size = activesize(prop_cache)
 
-    AK.foreachindex(term_view; max_tasks=_maxtasks(thread)) do ii
+    AK.foreachindex(term_view; max_tasks=maxtasks(thread)) do ii
         # if this is the start of a new group
         if flags[ii]
             # end index is the before the next flag or the end of the array

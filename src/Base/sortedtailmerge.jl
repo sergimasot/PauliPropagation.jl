@@ -47,9 +47,9 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=tru
     unsorted_tail_terms = view(active_terms, n_old+1:n_new)
     unsorted_tail_coeffs = view(active_coeffs, n_old+1:n_new)
     tail_perm = view(indices(prop_cache), 1:n_tail)
-    AK.sortperm!(tail_perm, unsorted_tail_terms; max_tasks=_maxtasks(thread))
+    AK.sortperm!(tail_perm, unsorted_tail_terms; max_tasks=maxtasks(thread))
 
-    task_partitioner = AK.TaskPartitioner(n_old, _maxtasks(thread), _TAILMERGE_MIN_ELEMS_PER_TASK)
+    task_partitioner = AK.TaskPartitioner(n_old, maxtasks(thread), _TAILMERGE_MIN_ELEMS_PER_TASK)
     n_tasks = task_partitioner.num_tasks
 
     # the merge below only ever writes into aux[1:merged_count] with merged_count <= n_new, so any

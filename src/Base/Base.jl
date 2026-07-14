@@ -5,7 +5,7 @@ const AK = AcceleratedKernels
 using Base.Threads
 
 include("./utils.jl")
-export tonumber, _maxtasks
+export tonumber, maxtasks
 
 include("./termsum.jl")
 export

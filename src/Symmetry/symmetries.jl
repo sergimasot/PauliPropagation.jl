@@ -47,7 +47,7 @@ function symmetrymerge(psum::VectorPauliSum, mapfunc::F; thread::Bool=true) wher
 end
 
 function symmetrymerge!(prop_cache::VectorPauliPropagationCache, mapfunc::F; thread::Bool=true) where F<:Function
-    AK.map!(pstr -> mapfunc(pstr), activeterms(prop_cache), activeterms(prop_cache); max_tasks=_maxtasks(thread))
+    AK.map!(pstr -> mapfunc(pstr), activeterms(prop_cache), activeterms(prop_cache); max_tasks=maxtasks(thread))
     merge!(prop_cache; thread)
     return prop_cache
 end

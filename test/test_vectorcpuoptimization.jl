@@ -125,6 +125,66 @@ end
     @test overlapwithzero(d_thread) == overlapwithzero(d_nothread)
 end
 
+@testset "Sort-tail-merge specialization: multi-task merge path" begin
+    # A sorted head large enough that AK.TaskPartitioner splits the merge into more than one
+    # task (only reachable with Threads.nthreads() > 1 and a few thousand sorted elements).
+    # The multi-task write path assigns write offsets via a global prefix sum while sorted-tail
+    # storage sits at fixed positions, so chunk boundaries have to line up exactly; tail terms
+    # are drawn so that some collide with head terms and some repeat within the tail itself,
+    # exercising both head/tail and intra-tail merges that straddle those boundaries.
+    nq = 20
+    TT = PauliPropagation.getinttype(nq)
+    Random.seed!(7)
+
+    n_head = 6000
+    n_tail = 3000
+
+    head_terms = TT[]
+    head_set = Set{TT}()
+    while length(head_set) < n_head
+        t = rand(TT(0):TT(4^nq - 1))
+        if t ∉ head_set
+            push!(head_set, t)
+            push!(head_terms, t)
+        end
+    end
+    sort!(head_terms)
+    head_coeffs = rand(n_head)
+
+    tail_terms = TT[]
+    tail_coeffs = Float64[]
+    for _ in 1:n_tail
+        t = rand() < 0.3 ? rand(head_terms) : rand(TT(0):TT(4^nq - 1))
+        push!(tail_terms, t)
+        push!(tail_coeffs, rand())
+    end
+
+    reference = Dict{TT,Float64}()
+    for (t, c) in zip(vcat(head_terms, tail_terms), vcat(head_coeffs, tail_coeffs))
+        reference[t] = get(reference, t, 0.0) + c
+    end
+
+    vpsum = VectorPauliSum(nq, vcat(head_terms, tail_terms), vcat(head_coeffs, tail_coeffs), n_head)
+    prop_cache = VectorPauliPropagationCache(vpsum)
+
+    PB = PauliPropagation.PropagationBase
+    task_partitioner = PB.AK.TaskPartitioner(n_head, PB.maxtasks(true), PB._TAILMERGE_MIN_ELEMS_PER_TASK)
+    if Threads.nthreads() > 1
+        @test task_partitioner.num_tasks > 1
+    end
+
+    merge!(prop_cache)
+
+    result_terms = PauliPropagation.activeterms(prop_cache)
+    result_coeffs = PauliPropagation.activecoeffs(prop_cache)
+
+    @test length(result_terms) == length(reference)
+    @test issorted(result_terms)
+    @test PauliPropagation.sortedprefix(mainsum(prop_cache)) == length(result_terms)
+    @test Set(result_terms) == Set(keys(reference))
+    @test all(isapprox(c, reference[t]) for (t, c) in zip(result_terms, result_coeffs))
+end
+
 @testset "thread=false is safe to nest inside external threading" begin
     # thread=false must not spawn its own tasks, so running several propagations concurrently
     # inside an outer Threads.@threads loop should give exactly the same results as running them
