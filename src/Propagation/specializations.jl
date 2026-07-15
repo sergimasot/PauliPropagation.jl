@@ -241,6 +241,44 @@ function PropagationBase.applytoall!(gate::PauliNoise, prop_cache::PauliPropagat
     return prop_cache
 end
 
+"""
+    applymergetruncate!(gate::PauliNoise, prop_cache::PauliPropagationCache, lambda; min_abs_coeff=1e-10, max_weight=Inf, max_freq=Inf, max_sins=Inf, customtruncfunc=nothing, kwargs...)
+
+Overload of `applymergetruncate!` for `PauliNoise` gates and a propagating `PauliSum`.
+`PauliNoise` never merges and never changes which Pauli string a term is (only its coefficient), so this
+rescales and truncates every term in a single pass, instead of the generic apply-then-truncate two-pass
+default.
+"""
+function PropagationBase.applymergetruncate!(gate::PauliNoise, prop_cache::PauliPropagationCache, lambda;
+    min_abs_coeff::Real=1e-10, max_weight::Real=Inf, max_freq::Real=Inf, max_sins::Real=Inf, customtruncfunc=nothing, kwargs...)
+
+    _check_qind_range(nqubits(prop_cache), gate.qind)
+    _check_noise_strength(PauliNoise, lambda)
+
+    psum = mainsum(prop_cache)
+    qind = gate.qind
+
+    for (pstr, coeff) in psum
+        isdamped(gate, getpauli(pstr, qind)) || continue
+
+        new_coeff = coeff * (1 - lambda)
+
+        is_truncated = truncateweight(pstr, max_weight) ||
+                       truncatemincoeff(new_coeff, min_abs_coeff) ||
+                       truncatefrequency(new_coeff, max_freq) ||
+                       truncatesins(new_coeff, max_sins) ||
+                       (!isnothing(customtruncfunc) && customtruncfunc(pstr, new_coeff))
+
+        if is_truncated
+            delete!(psum, pstr)
+        else
+            set!(psum, pstr, new_coeff)
+        end
+    end
+
+    return prop_cache
+end
+
 ### Amplitude Damping Noise
 """
     applytoall!(gate::AmplitudeDampingNoise, prop_cache::PauliPropagationCache, gamma; kwargs...)

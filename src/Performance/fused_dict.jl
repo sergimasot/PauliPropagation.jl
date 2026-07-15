@@ -92,6 +92,9 @@ function PauliPropagation.applymergetruncate!(gate::PauliRotation, prop_cache::P
     truncfunc(pstr, coeff) = _fusedtruncfunc(pstr, coeff; min_abs_coeff, max_weight, max_freq, max_sins, customtruncfunc)
 
     touched = Tuple{keytype(psum),valtype(psum)}[]
+    # bounded above by one push per filled, non-commuting slot -- a tighter bound than the raw
+    # table size (nslots), which includes empty/tombstone slots
+    sizehint!(touched, length(psum))
 
     # pass 1: walk existing slots directly, update/delete in place by known slot index
     nslots = length(psum.slots)
@@ -113,69 +116,25 @@ function PauliPropagation.applymergetruncate!(gate::PauliRotation, prop_cache::P
         push!(touched, (new_pstr, coeff * sin_val * sign))
     end
 
-    # pass 2a: accumulate every touched delta first, without truncating. Truncating per-touch
-    # would be order-dependent -- a key touched by multiple sin-branches could get deleted on an
-    # early partial sum and lose later contributions that would have pushed it back above threshold.
-    touched_keys = Set{keytype(psum)}()
+    # pass 2: accumulate each touched delta into its final value and truncate immediately.
+    # `touched` never contains duplicate keys: for a fixed gate_mask, paulirotationproduct is a
+    # bijection on Pauli strings (multiplication by a fixed Pauli group element), and pass 1 only
+    # ever touches each dict key once -- so distinct source pstrs always produce distinct
+    # new_pstrs. That means each touched key gets exactly one, complete update below (either
+    # accumulated onto whatever value it already had before this gate ran, or freshly inserted) --
+    # never a partial sum -- so it's safe to truncate right after that single update instead of
+    # deferring to a second pass with a second hash lookup per entry.
     for (new_pstr, delta) in touched
         index, sh = Base.ht_keyindex2_shorthash!(psum, new_pstr)
         if index > 0
-            psum.vals[index] += delta
-        else
+            new_val = psum.vals[index] + delta
+            if truncfunc(new_pstr, new_val)
+                Base._delete!(psum, index)
+            else
+                psum.vals[index] = new_val
+            end
+        elseif !truncfunc(new_pstr, delta)
             Base._setindex!(psum, delta, new_pstr, -index, sh)
-        end
-        push!(touched_keys, new_pstr)
-    end
-
-    # pass 2b: truncate each touched key exactly once, using its final combined coefficient
-    for new_pstr in touched_keys
-        index, _ = Base.ht_keyindex2_shorthash!(psum, new_pstr)
-        if index > 0 && truncfunc(new_pstr, psum.vals[index])
-            Base._delete!(psum, index)
-        end
-    end
-
-    return prop_cache
-end
-
-
-### Pauli Noise
-# TODO: This should just be the default `applymergetruncate!` 
-# BUT: NOTABLY WITHOUT THE DICT INTERNALS
-"""
-    applymergetruncate!(gate::PauliNoise, prop_cache::PauliPropagationCache, lambda; fused::Bool=false, min_abs_coeff=1e-10, kwargs...)
-
-Fused overload for `PauliNoise`: rescales each term's coefficient in place and truncates by
-`min_abs_coeff`, walking the backing `Dict`'s slots directly. No merging needed since noise only
-rescales existing terms. Only used when `fused=true`; otherwise falls through to stock behavior.
-"""
-function PauliPropagation.applymergetruncate!(gate::PauliNoise, prop_cache::PauliPropagationCache, lambda;
-    fused::Bool=false, min_abs_coeff::Real=1e-10, kwargs...)
-
-    if !fused
-        return invoke(PauliPropagation.applymergetruncate!,
-            Tuple{PauliNoise,PauliPropagation.AbstractPauliPropagationCache,typeof(lambda)},
-            gate, prop_cache, lambda; min_abs_coeff, kwargs...)
-    end
-
-    PauliPropagation._check_qind_range(nqubits(prop_cache), gate.qind)
-    PauliPropagation._check_noise_strength(PauliNoise, lambda)
-
-    psum_dict = PB.storage(mainsum(prop_cache))
-    qind = gate.qind
-
-    @inbounds for i in 1:length(psum_dict.slots)
-        Base.isslotfilled(psum_dict, i) || continue
-
-        pstr = psum_dict.keys[i]
-        pauli = getpauli(pstr, qind)
-        PauliPropagation.isdamped(gate, pauli) || continue
-
-        new_coeff = psum_dict.vals[i] * (1 - lambda)
-        if abs(new_coeff) < min_abs_coeff
-            Base._delete!(psum_dict, i)
-        else
-            psum_dict.vals[i] = new_coeff
         end
     end
 
