@@ -1,4 +1,15 @@
 
+# Writes (term, coeff) to out_terms/out_coeffs at pos when DoWrite; always returns pos + 1.
+# This is the dry-run/real-run toggle used throughout the tail-merge and fused-apply workers:
+# DoWrite=false just counts output size, DoWrite=true performs the actual write.
+@inline function _writeandadvance!(out_terms, out_coeffs, pos, term, coeff, ::Val{DoWrite}) where DoWrite
+    if DoWrite
+        @inbounds out_terms[pos] = term
+        @inbounds out_coeffs[pos] = coeff
+    end
+    return pos + 1
+end
+
 function sortbyterm!(prop_cache::AbstractPropagationCache; lt=isless, by=identity, rev=false, order=Base.Forward, thread::Bool=true)
 
     # if terms are are not native data types, sorting kwargs need to be provided

@@ -30,22 +30,16 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=tru
         return prop_cache
     end
 
-    active_terms = terms(mainsum(prop_cache))
-    active_coeffs = coefficients(mainsum(prop_cache))
+    main_terms, main_coeffs, aux_terms, aux_coeffs = _mainauxarrays(prop_cache)
 
-    # merge output goes into the auxiliary sum, swapped in as the new active one at the end
-    aux_terms = terms(auxsum(prop_cache))
-    aux_coeffs = coefficients(auxsum(prop_cache))
-
-    # sort the tail 
+    # sort the tail
     # interestingly sort! of StructArray is not faster, potentially due to heavier writes
-    unsorted_tail_terms = view(active_terms, n_old+1:n_new)
-    unsorted_tail_coeffs = view(active_coeffs, n_old+1:n_new)
+    unsorted_tail_terms = view(main_terms, n_old+1:n_new)
+    unsorted_tail_coeffs = view(main_coeffs, n_old+1:n_new)
     tail_perm = view(indices(prop_cache), 1:n_tail)
     AK.sortperm!(tail_perm, unsorted_tail_terms; max_tasks=maxtasks(thread), min_elems=_MIN_ELEMS_PER_TASK)
 
-    task_partitioner = AK.TaskPartitioner(n_old, maxtasks(thread), _MIN_ELEMS_PER_TASK)
-    n_tasks = task_partitioner.num_tasks
+    task_partitioner, n_tasks = _preparetasks(n_old, thread)
 
     # merge only ever writes into aux[1:merged_count] <= n_new, so capacity beyond n_new (leftover
     # growth headroom) is free scratch space for the sorted tail -- else allocate fresh
@@ -61,14 +55,14 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=tru
 
     if n_tasks == 1
         merged_count = _tailmerge_write!(aux_terms, aux_coeffs, 1,
-            active_terms, active_coeffs, 1, n_old, tail_terms, tail_coeffs, 1, n_tail, truncfunc, Val(true))
+            main_terms, main_coeffs, 1, n_old, tail_terms, tail_coeffs, 1, n_tail, truncfunc, Val(true))
     else
         # slice and partition the two-pointer merge across threads
         tail_bounds_per_task = Vector{Int}(undef, n_tasks + 1)
         tail_bounds_per_task[1] = 1
         tail_bounds_per_task[n_tasks+1] = n_tail + 1
         @inbounds for task_id in 1:(n_tasks-1)
-            head_chunk_boundary_term = active_terms[task_partitioner[task_id].stop]
+            head_chunk_boundary_term = main_terms[task_partitioner[task_id].stop]
             tail_bounds_per_task[task_id+1] = searchsortedlast(tail_terms, head_chunk_boundary_term) + 1
         end
 
@@ -77,32 +71,39 @@ function sortedtailmerge!(prop_cache::AbstractPropagationCache; thread::Bool=tru
         AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
             head_range = task_partitioner[task_id]
             merged_counts_per_task[task_id] = _tailmerge_write!(aux_terms, aux_coeffs, 1,
-                active_terms, active_coeffs, head_range.start, head_range.stop,
+                main_terms, main_coeffs, head_range.start, head_range.stop,
                 tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, truncfunc, Val(false))
         end
 
         # prefix sum over the per-task counts gives each task its exact final write offset
-        write_offsets_per_task = Vector{Int}(undef, n_tasks + 1)
-        write_offsets_per_task[1] = 1
-        @inbounds for task_id in 1:n_tasks
-            write_offsets_per_task[task_id+1] = write_offsets_per_task[task_id] + merged_counts_per_task[task_id]
-        end
-        merged_count = write_offsets_per_task[n_tasks+1] - 1
+        write_offsets_per_task = _offsetsfromcounts(merged_counts_per_task)
+        merged_count = write_offsets_per_task[end] - 1
 
         # real pass: each task redoes the same merge, now writing directly into its final position
         AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
             head_range = task_partitioner[task_id]
             _tailmerge_write!(aux_terms, aux_coeffs, write_offsets_per_task[task_id],
-                active_terms, active_coeffs, head_range.start, head_range.stop,
+                main_terms, main_coeffs, head_range.start, head_range.stop,
                 tail_terms, tail_coeffs, tail_bounds_per_task[task_id], tail_bounds_per_task[task_id+1] - 1, truncfunc, Val(true))
         end
     end
 
-    swapsums!(prop_cache)
-    setactivesize!(prop_cache, merged_count)
-    setsortedprefix!(mainsum(prop_cache), merged_count)
+    _commitwrite!(prop_cache, merged_count, merged_count)
 
     return prop_cache
+end
+
+# Folds the run of terms in tail_terms[tail_j:tail_hi] equal to tail_term into `seed` via
+# mergefunc, in order. Returns (merged_coeff, run_length, next_tail_j).
+@inline function _foldtailrun(tail_terms, tail_coeffs, tail_j, tail_hi, tail_term, seed)
+    merged_coeff = seed
+    run_length = 0
+    @inbounds while tail_j <= tail_hi && tail_terms[tail_j] == tail_term
+        merged_coeff = mergefunc(merged_coeff, tail_coeffs[tail_j])
+        tail_j += 1
+        run_length += 1
+    end
+    return merged_coeff, run_length, tail_j
 end
 
 # Two-pointer merge of a sorted head against a sorted tail that may contain duplicate runs (against
@@ -122,67 +123,31 @@ end
         tail_term = tail_terms[tail_j]
         if head_term == tail_term
             # collision: merge the head term with the *entire run* of equal tail terms
-            merged_coeff = head_coeffs[head_i]
-            while tail_j <= tail_hi && tail_terms[tail_j] == tail_term
-                merged_coeff = mergefunc(merged_coeff, tail_coeffs[tail_j])
-                tail_j += 1
-            end
+            merged_coeff, _, tail_j = _foldtailrun(tail_terms, tail_coeffs, tail_j, tail_hi, tail_term, head_coeffs[head_i])
             if truncfunc === nothing || !truncfunc(head_term, merged_coeff)
-                if DoWrite
-                    out_terms[write_pos] = head_term
-                    out_coeffs[write_pos] = merged_coeff
-                end
-                write_pos += 1
+                write_pos = _writeandadvance!(out_terms, out_coeffs, write_pos, head_term, merged_coeff, Val(DoWrite))
             end
             head_i += 1
         elseif head_term < tail_term
-            if DoWrite
-                out_terms[write_pos] = head_term
-                out_coeffs[write_pos] = head_coeffs[head_i]
-            end
-            write_pos += 1
+            write_pos = _writeandadvance!(out_terms, out_coeffs, write_pos, head_term, head_coeffs[head_i], Val(DoWrite))
             head_i += 1
         else
             # tail term has no match in the head (yet): merge its own run of duplicates first
-            run_lo = tail_j
-            merged_coeff = tail_coeffs[tail_j]
-            tail_j += 1
-            while tail_j <= tail_hi && tail_terms[tail_j] == tail_term
-                merged_coeff = mergefunc(merged_coeff, tail_coeffs[tail_j])
-                tail_j += 1
-            end
-            if tail_j - run_lo == 1 || truncfunc === nothing || !truncfunc(tail_term, merged_coeff)
-                if DoWrite
-                    out_terms[write_pos] = tail_term
-                    out_coeffs[write_pos] = merged_coeff
-                end
-                write_pos += 1
+            merged_coeff, run_length, tail_j = _foldtailrun(tail_terms, tail_coeffs, tail_j + 1, tail_hi, tail_term, tail_coeffs[tail_j])
+            if run_length == 0 || truncfunc === nothing || !truncfunc(tail_term, merged_coeff)
+                write_pos = _writeandadvance!(out_terms, out_coeffs, write_pos, tail_term, merged_coeff, Val(DoWrite))
             end
         end
     end
     @inbounds while head_i <= head_hi
-        if DoWrite
-            out_terms[write_pos] = head_terms[head_i]
-            out_coeffs[write_pos] = head_coeffs[head_i]
-        end
-        write_pos += 1
+        write_pos = _writeandadvance!(out_terms, out_coeffs, write_pos, head_terms[head_i], head_coeffs[head_i], Val(DoWrite))
         head_i += 1
     end
     @inbounds while tail_j <= tail_hi
         tail_term = tail_terms[tail_j]
-        run_lo = tail_j
-        merged_coeff = tail_coeffs[tail_j]
-        tail_j += 1
-        while tail_j <= tail_hi && tail_terms[tail_j] == tail_term
-            merged_coeff = mergefunc(merged_coeff, tail_coeffs[tail_j])
-            tail_j += 1
-        end
-        if tail_j - run_lo == 1 || truncfunc === nothing || !truncfunc(tail_term, merged_coeff)
-            if DoWrite
-                out_terms[write_pos] = tail_term
-                out_coeffs[write_pos] = merged_coeff
-            end
-            write_pos += 1
+        merged_coeff, run_length, tail_j = _foldtailrun(tail_terms, tail_coeffs, tail_j + 1, tail_hi, tail_term, tail_coeffs[tail_j])
+        if run_length == 0 || truncfunc === nothing || !truncfunc(tail_term, merged_coeff)
+            write_pos = _writeandadvance!(out_terms, out_coeffs, write_pos, tail_term, merged_coeff, Val(DoWrite))
         end
     end
 

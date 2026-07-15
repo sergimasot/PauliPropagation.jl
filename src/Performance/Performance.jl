@@ -11,6 +11,15 @@ using PauliPropagation.PropagationBase
 using AcceleratedKernels
 const AK = AcceleratedKernels
 
+@inline function _fusedtruncfunc(pstr, coeff; min_abs_coeff, max_weight, max_freq, max_sins, customtruncfunc)
+    PauliPropagation.truncatemincoeff(coeff, min_abs_coeff) && return true
+    PauliPropagation.truncateweight(pstr, max_weight) && return true
+    PauliPropagation.truncatefrequency(coeff, max_freq) && return true
+    PauliPropagation.truncatesins(coeff, max_sins) && return true
+    !isnothing(customtruncfunc) && customtruncfunc(pstr, coeff) && return true
+    return false
+end
+
 # PauliSum overload for PauliRotation
 include("./fused_dict.jl")
 

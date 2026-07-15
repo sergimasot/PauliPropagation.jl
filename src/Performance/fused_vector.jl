@@ -6,15 +6,6 @@
 ##
 ###
 
-@inline function _fusedtruncfunc(pstr, coeff; min_abs_coeff, max_weight, max_freq, max_sins, customtruncfunc)
-    PauliPropagation.truncatemincoeff(coeff, min_abs_coeff) && return true
-    PauliPropagation.truncateweight(pstr, max_weight) && return true
-    PauliPropagation.truncatefrequency(coeff, max_freq) && return true
-    PauliPropagation.truncatesins(coeff, max_sins) && return true
-    !isnothing(customtruncfunc) && customtruncfunc(pstr, coeff) && return true
-    return false
-end
-
 """
     applymergetruncate!(gate::PauliRotation, prop_cache::VectorPauliPropagationCache, theta; fused::Bool=false, kwargs...)
 
@@ -66,13 +57,8 @@ function _fusedapplytruncatepaulirotation!(prop_cache::PauliPropagation.VectorPa
     cos_val = cos(theta)
     sin_val = sin(theta)
 
-    task_partitioner = AK.TaskPartitioner(n_old, PauliPropagation.maxtasks(thread), PropagationBase._MIN_ELEMS_PER_TASK)
-    n_tasks = task_partitioner.num_tasks
-
-    terms_full = terms(mainsum(prop_cache))
-    coeffs_full = coeffs(mainsum(prop_cache))
-    aux_terms = terms(auxsum(prop_cache))
-    aux_coeffs = coeffs(auxsum(prop_cache))
+    task_partitioner, n_tasks = PropagationBase._preparetasks(n_old, thread)
+    main_terms, main_coeffs, aux_terms, aux_coeffs = PropagationBase._mainauxarrays(prop_cache)
 
     kept_counts = Vector{Int}(undef, n_tasks)
     new_counts = Vector{Int}(undef, n_tasks)
@@ -80,56 +66,35 @@ function _fusedapplytruncatepaulirotation!(prop_cache::PauliPropagation.VectorPa
 
     # dry run: each task counts its own kept (commuting or surviving cos-branch) and new (surviving
     # sin-branch) output sizes, without writing
-    if n_tasks == 1
-        kept_counts[1], new_counts[1], sorted_kept_counts[1] = _fusedbranchwrite!(aux_terms, aux_coeffs, 1, aux_terms, aux_coeffs, 1,
-            terms_full, coeffs_full, 1, n_old, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(false))
-    else
-        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-            rng = task_partitioner[task_id]
-            kept_counts[task_id], new_counts[task_id], sorted_kept_counts[task_id] = _fusedbranchwrite!(aux_terms, aux_coeffs, 1, aux_terms, aux_coeffs, 1,
-                terms_full, coeffs_full, rng.start, rng.stop, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(false))
-        end
+    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+        rng = task_partitioner[task_id]
+        kept_counts[task_id], new_counts[task_id], sorted_kept_counts[task_id] = _fusedbranchwrite!(aux_terms, aux_coeffs, 1, aux_terms, aux_coeffs, 1,
+            main_terms, main_coeffs, rng.start, rng.stop, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(false))
     end
 
     # small serial prefix sums over just the per-task counts (mirrors sortedtailmerge!'s offset bookkeeping)
-    kept_offsets = Vector{Int}(undef, n_tasks + 1)
-    new_offsets = Vector{Int}(undef, n_tasks + 1)
-    kept_offsets[1] = 1
-    new_offsets[1] = 1
-    @inbounds for t in 1:n_tasks
-        kept_offsets[t+1] = kept_offsets[t] + kept_counts[t]
-        new_offsets[t+1] = new_offsets[t] + new_counts[t]
-    end
-    n_kept = kept_offsets[n_tasks+1] - 1
-    n_new = new_offsets[n_tasks+1] - 1
+    kept_offsets = PropagationBase._offsetsfromcounts(kept_counts)
+    new_offsets = PropagationBase._offsetsfromcounts(new_counts)
+    n_kept = kept_offsets[end] - 1
+    n_new = new_offsets[end] - 1
     n_total = n_kept + n_new
     new_sortedprefix = sum(sorted_kept_counts)
 
     resize_factor = 1.5
     if PauliPropagation.capacity(prop_cache) < n_total
         resize!(prop_cache, round(Int, n_total * resize_factor))
-        terms_full = terms(mainsum(prop_cache))
-        coeffs_full = coefficients(mainsum(prop_cache))
-        aux_terms = terms(auxsum(prop_cache))
-        aux_coeffs = coefficients(auxsum(prop_cache))
+        main_terms, main_coeffs, aux_terms, aux_coeffs = PropagationBase._mainauxarrays(prop_cache)
     end
 
     # real pass: redo the same walk, now writing each task's output directly into its final
     # position -- kept head at kept_offsets[task], new tail right after it at n_kept+new_offsets[task]
-    if n_tasks == 1
-        _fusedbranchwrite!(aux_terms, aux_coeffs, kept_offsets[1], aux_terms, aux_coeffs, n_kept + new_offsets[1],
-            terms_full, coeffs_full, 1, n_old, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(true))
-    else
-        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-            rng = task_partitioner[task_id]
-            _fusedbranchwrite!(aux_terms, aux_coeffs, kept_offsets[task_id], aux_terms, aux_coeffs, n_kept + new_offsets[task_id],
-                terms_full, coeffs_full, rng.start, rng.stop, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(true))
-        end
+    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+        rng = task_partitioner[task_id]
+        _fusedbranchwrite!(aux_terms, aux_coeffs, kept_offsets[task_id], aux_terms, aux_coeffs, n_kept + new_offsets[task_id],
+            main_terms, main_coeffs, rng.start, rng.stop, gate_mask, cos_val, sin_val, truncfunc, old_sortedprefix, Val(true))
     end
 
-    swapsums!(prop_cache)
-    setactivesize!(prop_cache, n_total)
-    setsortedprefix!(mainsum(prop_cache), new_sortedprefix)
+    PropagationBase._commitwrite!(prop_cache, n_total, new_sortedprefix)
 
     return prop_cache
 end
@@ -151,31 +116,19 @@ end
         coeff = coeffs[ii]
 
         if PauliPropagation.commutes(gate_mask, pstr)
-            if DoWrite
-                kept_out_terms[kept_pos] = pstr
-                kept_out_coeffs[kept_pos] = coeff
-            end
-            kept_pos += 1
+            kept_pos = PropagationBase._writeandadvance!(kept_out_terms, kept_out_coeffs, kept_pos, pstr, coeff, Val(DoWrite))
             ii <= old_sortedprefix && (n_sorted_kept += 1)
         else
             coeff1 = coeff * cos_val
             if !truncfunc(pstr, coeff1)
-                if DoWrite
-                    kept_out_terms[kept_pos] = pstr
-                    kept_out_coeffs[kept_pos] = coeff1
-                end
-                kept_pos += 1
+                kept_pos = PropagationBase._writeandadvance!(kept_out_terms, kept_out_coeffs, kept_pos, pstr, coeff1, Val(DoWrite))
                 ii <= old_sortedprefix && (n_sorted_kept += 1)
             end
 
             new_pstr, sign = PauliPropagation.paulirotationproduct(gate_mask, pstr)
             coeff2 = coeff * sin_val * sign
             if !truncfunc(new_pstr, coeff2)
-                if DoWrite
-                    new_out_terms[new_pos] = new_pstr
-                    new_out_coeffs[new_pos] = coeff2
-                end
-                new_pos += 1
+                new_pos = PropagationBase._writeandadvance!(new_out_terms, new_out_coeffs, new_pos, new_pstr, coeff2, Val(DoWrite))
             end
         end
     end
@@ -228,53 +181,32 @@ function _fusedapplytruncatenoise!(prop_cache::PauliPropagation.VectorPauliPropa
 
     qind = gate.qind
 
-    task_partitioner = AK.TaskPartitioner(n_old, PauliPropagation.maxtasks(thread), PropagationBase._MIN_ELEMS_PER_TASK)
-    n_tasks = task_partitioner.num_tasks
-
-    terms_full = terms(mainsum(prop_cache))
-    coeffs_full = coeffs(mainsum(prop_cache))
-    aux_terms = terms(auxsum(prop_cache))
-    aux_coeffs = coeffs(auxsum(prop_cache))
+    task_partitioner, n_tasks = PropagationBase._preparetasks(n_old, thread)
+    main_terms, main_coeffs, aux_terms, aux_coeffs = PropagationBase._mainauxarrays(prop_cache)
 
     kept_counts = Vector{Int}(undef, n_tasks)
     sorted_kept_counts = Vector{Int}(undef, n_tasks)
 
     # dry run: each task counts its own surviving output size, without writing
-    if n_tasks == 1
-        kept_counts[1], sorted_kept_counts[1] = _noisewrite!(aux_terms, aux_coeffs, 1,
-            terms_full, coeffs_full, 1, n_old, gate, qind, lambda, truncfunc, old_sortedprefix, Val(false))
-    else
-        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-            rng = task_partitioner[task_id]
-            kept_counts[task_id], sorted_kept_counts[task_id] = _noisewrite!(aux_terms, aux_coeffs, 1,
-                terms_full, coeffs_full, rng.start, rng.stop, gate, qind, lambda, truncfunc, old_sortedprefix, Val(false))
-        end
+    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+        rng = task_partitioner[task_id]
+        kept_counts[task_id], sorted_kept_counts[task_id] = _noisewrite!(aux_terms, aux_coeffs, 1,
+            main_terms, main_coeffs, rng.start, rng.stop, gate, qind, lambda, truncfunc, old_sortedprefix, Val(false))
     end
 
     # small serial prefix sum over just the per-task counts (mirrors sortedtailmerge!'s offset bookkeeping)
-    kept_offsets = Vector{Int}(undef, n_tasks + 1)
-    kept_offsets[1] = 1
-    @inbounds for t in 1:n_tasks
-        kept_offsets[t+1] = kept_offsets[t] + kept_counts[t]
-    end
-    n_kept = kept_offsets[n_tasks+1] - 1
+    kept_offsets = PropagationBase._offsetsfromcounts(kept_counts)
+    n_kept = kept_offsets[end] - 1
     new_sortedprefix = sum(sorted_kept_counts)
 
     # real pass: redo the same walk, now writing each task's output directly into its final position
-    if n_tasks == 1
-        _noisewrite!(aux_terms, aux_coeffs, kept_offsets[1],
-            terms_full, coeffs_full, 1, n_old, gate, qind, lambda, truncfunc, old_sortedprefix, Val(true))
-    else
-        AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
-            rng = task_partitioner[task_id]
-            _noisewrite!(aux_terms, aux_coeffs, kept_offsets[task_id],
-                terms_full, coeffs_full, rng.start, rng.stop, gate, qind, lambda, truncfunc, old_sortedprefix, Val(true))
-        end
+    AK.itask_partition(n_tasks, n_tasks, 1) do task_id, _
+        rng = task_partitioner[task_id]
+        _noisewrite!(aux_terms, aux_coeffs, kept_offsets[task_id],
+            main_terms, main_coeffs, rng.start, rng.stop, gate, qind, lambda, truncfunc, old_sortedprefix, Val(true))
     end
 
-    swapsums!(prop_cache)
-    setactivesize!(prop_cache, n_kept)
-    setsortedprefix!(mainsum(prop_cache), new_sortedprefix)
+    PropagationBase._commitwrite!(prop_cache, n_kept, new_sortedprefix)
 
     return prop_cache
 end
@@ -289,11 +221,7 @@ end
         pstr = terms[ii]
         new_coeff = PauliPropagation.isdamped(gate, getpauli(pstr, qind)) ? coeffs[ii] * (1 - lambda) : coeffs[ii]
         if !truncfunc(pstr, new_coeff)
-            if DoWrite
-                out_terms[pos] = pstr
-                out_coeffs[pos] = new_coeff
-            end
-            pos += 1
+            pos = PropagationBase._writeandadvance!(out_terms, out_coeffs, pos, pstr, new_coeff, Val(DoWrite))
             ii <= old_sortedprefix && (n_sorted_kept += 1)
         end
     end

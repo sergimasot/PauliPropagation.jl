@@ -89,14 +89,7 @@ function PauliPropagation.applymergetruncate!(gate::PauliRotation, prop_cache::P
     gate_mask = symboltoint(paulitype(prop_cache), gate.symbols, gate.qinds)
     cos_val, sin_val = cos(theta), sin(theta)
 
-    function truncfunc(pstr, coeff)
-        PauliPropagation.truncateweight(pstr, max_weight) && return true
-        PauliPropagation.truncatemincoeff(coeff, min_abs_coeff) && return true
-        PauliPropagation.truncatefrequency(coeff, max_freq) && return true
-        PauliPropagation.truncatesins(coeff, max_sins) && return true
-        !isnothing(customtruncfunc) && customtruncfunc(pstr, coeff) && return true
-        return false
-    end
+    truncfunc(pstr, coeff) = _fusedtruncfunc(pstr, coeff; min_abs_coeff, max_weight, max_freq, max_sins, customtruncfunc)
 
     touched = Tuple{keytype(psum),valtype(psum)}[]
 
