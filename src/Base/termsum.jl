@@ -385,7 +385,7 @@ Base.:*(c::Number, term_sum::AbstractTermSum) = term_sum * c
 Base.:/(term_sum::AbstractTermSum, scalar) = term_sum * (one(scalar) / scalar)
 
 
-# check for equality by equaility on all fields
+# check for equality by equality on all fields
 
 function Base.:(==)(term_sum1::AbstractTermSum, term_sum2::AbstractTermSum)
     # need to merge to efficiently check for equality

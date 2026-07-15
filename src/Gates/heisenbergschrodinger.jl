@@ -156,7 +156,7 @@ function _toschrodinger(gate::CliffordGate)
     transposed_symbol = Symbol(gate.symbol, :_transpose)
 
     if haskey(clifford_map, transposed_symbol)
-        return gate
+        return CliffordGate(transposed_symbol, gate.qinds)
     end
 
     # register the transpose 
