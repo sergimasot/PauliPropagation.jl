@@ -120,3 +120,32 @@ end
 
 end
 
+@testset "Test non-Hermitian Clifford gates equivalence" begin
+    nq = 1
+    min_abs_coeff = 0
+    # Specifically testing non-Hermitian Clifford gates which differ on the 
+    # required conjugation applied during Schrödinger <-> Heisenberg conversion.
+    non_hermitian_symbols = [:S, :SX, :SY]
+    
+    for symb in non_hermitian_symbols
+        # Calling the gates twice to catch consistency
+        circ = [CliffordGate(symb, 1), CliffordGate(symb, 1)]
+        
+        # We evaluate the product of two pstr in the style of the first equivalence testset
+        for p1 in [:X, :Y, :Z], p2 in [:X, :Y, :Z]
+            pstr_beginning = PauliString(nq, p1, 1)
+            pstr_end = PauliString(nq, p2, 1)
+            
+            # Propagate forward (Schrödinger)
+            psum_beginning = propagate(circ, pstr_beginning; heisenberg=false, min_abs_coeff)
+            val1 = scalarproduct(psum_beginning, pstr_end)
+            
+            # Propagate backward (Heisenberg)
+            psum_end = propagate(circ, pstr_end; heisenberg=true, min_abs_coeff)
+            val2 = scalarproduct(pstr_beginning, psum_end)
+            
+            @test val1 ≈ val2
+        end
+    end
+end
+
